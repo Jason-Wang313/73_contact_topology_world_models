@@ -1,4 +1,13 @@
-case,expected_behavior,observed_success,lesson
-unmodeled_hardware_damage,planner abstains or requests human inspection,0.18,branch semantics cannot repair missing actuation
-semantic_goal_ambiguity,diagnostic physical probes do not solve language ambiguity,0.31,needs a separate instruction-grounding loop
-adversarial_sensor_dropout,tail-risk objective becomes conservative,0.39,sensor-health modeling is out of scope
+case,split,seed,episode,success,edge_f1,graph_edit,fixture_contact_rate,wall_contact_rate,final_progress,lesson
+0,combined_stress,3,4,0,0.51667,0.24219,0.95312,0.01562,0.68337,fixture contact changed the graph faster than the topology predictor adapted
+1,fixture_topology_shift,2,7,0,0.50937,0.24805,0.95312,0.00000,0.00000,fixture contact changed the graph faster than the topology predictor adapted
+2,fixture_topology_shift,6,1,0,0.51771,0.24219,0.93750,0.01562,0.55249,fixture contact changed the graph faster than the topology predictor adapted
+3,fixture_topology_shift,1,7,0,0.51250,0.24023,0.92188,0.01562,0.68876,fixture contact changed the graph faster than the topology predictor adapted
+4,fixture_topology_shift,5,2,0,0.46771,0.30469,0.90625,0.01562,0.34648,fixture contact changed the graph faster than the topology predictor adapted
+5,fixture_topology_shift,5,5,0,0.41458,0.35352,0.90625,0.00000,0.00000,fixture contact changed the graph faster than the topology predictor adapted
+6,fixture_topology_shift,0,5,0,0.45781,0.33008,0.89062,0.00000,0.00000,fixture contact changed the graph faster than the topology predictor adapted
+7,fixture_topology_shift,3,0,0,0.51094,0.25195,0.87500,0.01562,0.00000,fixture contact changed the graph faster than the topology predictor adapted
+8,fixture_topology_shift,6,3,0,0.55469,0.21875,0.82812,0.01562,0.53047,fixture contact changed the graph faster than the topology predictor adapted
+9,combined_stress,0,2,0,0.55052,0.21680,0.79688,0.01562,0.79181,fixture contact changed the graph faster than the topology predictor adapted
+10,fixture_topology_shift,4,0,0,0.60573,0.20703,0.71875,0.01562,0.00000,fixture contact changed the graph faster than the topology predictor adapted
+11,combined_stress,4,7,0,0.54896,0.21875,0.70312,0.00000,0.66099,fixture contact changed the graph faster than the topology predictor adapted

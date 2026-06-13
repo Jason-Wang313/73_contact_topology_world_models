@@ -1,7 +1,7 @@
 # Novelty Decision
 
-Chosen thesis: Contact Topology World Models turns the seed bet into a mechanism: Predict topology changes in contact graphs rather than only state trajectories.
+Chosen thesis: contact-rich world models should predict topology changes in the contact graph rather than only state trajectories.
 
-New central mechanism: Contact topology world models keeps action-critical alternatives explicit until a physical observation collapses them.
+v4 decision: KILL_ARCHIVE.
 
-Decision: proceed as a revise/workshop-strength ICLR-style draft with synthetic but runnable evidence.
+The thesis was tested in a real local MuJoCo benchmark. The current topology model improves some graph diagnostics, but it does not improve combined-stress task success over the strongest non-oracle baseline. The result is useful as a negative finding: contact-topology prediction alone is not sufficient unless it changes action selection.
