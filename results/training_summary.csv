@@ -1,0 +1,2 @@
+training_examples,state_delta_train_mae,pairwise_edge_train_f1,edge_count
+2200,0.02743,0.93970,8

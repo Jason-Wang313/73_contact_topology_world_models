@@ -1,8 +1,10 @@
 # Reviewer Attacks
 
-- This is only uncertainty with different words.
-- The evidence is synthetic and may not transfer to real hardware.
-- The hostile prior work already contains contact-aware world models.
-- The proposed mechanism may be too specialized for broad ICLR interest.
+- The topology model improves edge F1 over one baseline but does not improve task success.
+- State-only dynamics and contact-implicit/distance baselines match topology success.
+- The oracle success rate is low, so the local benchmark is difficult but not submission-grade.
+- Ablations do not show a decisive topology-component contribution.
+- There is no real robot, public benchmark, or qualitative rollout evidence.
+- The related-work area is crowded with visuotactile world models, contact-implicit MPC, and contact-rich manipulation policies.
 
-Response: the paper must emphasize branch semantics, explicit failure conditions, and honest synthetic scope.
+Response: accept the rejection. The correct action is `KILL_ARCHIVE`, not claim shaping.
