@@ -4,6 +4,13 @@ Paper: 73 contact_topology_world_models
 
 This v4 pass applies the ICLR main-conference bar after rebuilding the evidence package.
 
+## 2026-06-15 Continuation Audit
+Attack: A topology world model must improve downstream contact-rich control, not merely intermediate graph metrics.
+
+Verdict: Fatal. The verified CSVs contain 2,240 main rollouts, 252 ablation rollouts, and 1,050 stress rollouts across 7 seeds. On combined stress, `topology_world_model` reaches 0.107 success versus 0.125 for `ensemble_uncertainty_planner`, with topology-minus-ensemble paired success difference -0.018 +/- 0.035. The topology model improves edge F1 over the ensemble baseline, 0.610 versus 0.364, but task success is lower. Multiple non-topology/contact baselines match topology success, and at stress level 1.00 the topology method reaches 0.000 success.
+
+Action: Keep KILL_ARCHIVE and preserve the reproducible negative result without claiming ICLR-main readiness.
+
 ## Attack 1: Does the proposed method beat the strongest implemented baseline?
 
 Verdict: No. `topology_world_model` reaches 0.107 +/- 0.083 combined-stress success. `ensemble_uncertainty_planner` reaches 0.125 +/- 0.076.

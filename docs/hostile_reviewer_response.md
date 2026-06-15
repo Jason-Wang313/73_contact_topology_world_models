@@ -19,6 +19,8 @@ A hostile reviewer should reject this as an ICLR-main submission. The v4 rebuild
 
 The most damaging result is that graph-prediction improvement does not translate into control improvement. `topology_world_model` has higher edge F1 than `ensemble_uncertainty_planner`, but lower task success. Meanwhile, state-only and distance/contact-implicit baselines match topology success with better graph edit distance.
 
+The 2026-06-15 continuation audit rechecked the exact numbers from the raw CSVs: on combined stress, `topology_world_model` reaches 0.107 success while `ensemble_uncertainty_planner` reaches 0.125, with topology-minus-ensemble paired success difference -0.018 +/- 0.035. The topology method has higher edge F1 than the ensemble baseline, 0.610 versus 0.364, but this does not become a task-success gain. At stress level 1.00, `topology_world_model` reaches 0.000 success while the oracle topology planner reaches 0.086.
+
 ## Honest Action
 
 Mark `KILL_ARCHIVE`. Keep the repository as a negative-result package and do not submit it as an ICLR main paper.

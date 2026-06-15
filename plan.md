@@ -10,3 +10,11 @@ Paper 73 was rebuilt as a real MuJoCo contact-topology study before terminal pac
 6. Package the archive manuscript, numbered Downloads PDF, and public GitHub repo.
 
 Outcome: KILL_ARCHIVE. Contact topology prediction does not produce a decisive task-success advantage over the strongest non-oracle baseline.
+
+## 2026-06-15 Continuation Plan
+
+1. Re-audit the real MuJoCo contact-topology evidence before making any submission-readiness claim.
+2. Confirm the experiment source compiles and all raw CSVs are present, finite, and at the claimed scale.
+3. Rebuild the PDF, repair recoverable LaTeX/BibTeX issues, and copy only `73.pdf` to Downloads.
+4. Preserve `KILL_ARCHIVE` unless topology prediction produces a decisive downstream task-success gain over the strongest non-oracle baseline.
+5. Update child docs, root reports, and GitHub state before moving to Paper 74.
