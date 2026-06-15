@@ -14,3 +14,4 @@
 12. Exact Downloads PDF path: `C:/Users/wangz/Downloads/73.pdf`
 13. GitHub URL: https://github.com/Jason-Wang313/73_contact_topology_world_models
 14. Confirmation: no visible Desktop copy was requested or made.
+15. 2026-06-15 continuation audit: source compilation, CSV integrity, result scale, PDF/BibTeX rebuild, Downloads-only artifact placement, and public GitHub target were rechecked. Decision remains KILL_ARCHIVE.
