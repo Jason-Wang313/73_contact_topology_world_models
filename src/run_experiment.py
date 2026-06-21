@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import math
 import os
@@ -14,19 +15,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
 
 
 BASE_SEED = 1678111061
 QUICK_MODE = os.getenv("PAPER73_QUICK", "0") == "1"
-SEED_COUNT = int(os.getenv("PAPER73_SEED_COUNT", "1" if QUICK_MODE else "7"))
+SEED_COUNT = int(os.getenv("PAPER73_SEED_COUNT", "1" if QUICK_MODE else "8"))
 SEEDS = list(range(SEED_COUNT))
-EVAL_EPISODES = int(os.getenv("PAPER73_EVAL_EPISODES", "8"))
-ABLATION_EPISODES = int(os.getenv("PAPER73_ABLATION_EPISODES", "6"))
-STRESS_EPISODES = int(os.getenv("PAPER73_STRESS_EPISODES", "5"))
-TRAINING_EXAMPLES = int(os.getenv("PAPER73_TRAINING_EXAMPLES", "2200"))
-STEPS = 64
+EVAL_EPISODES = int(os.getenv("PAPER73_EVAL_EPISODES", "6"))
+ABLATION_EPISODES = int(os.getenv("PAPER73_ABLATION_EPISODES", "4"))
+STRESS_EPISODES = int(os.getenv("PAPER73_STRESS_EPISODES", "3"))
+TRAINING_EXAMPLES = int(os.getenv("PAPER73_TRAINING_EXAMPLES", "2400"))
+STEPS = int(os.getenv("PAPER73_STEPS", "48"))
 INNER_STEPS = 3
 DT = 0.02
 
@@ -51,26 +53,46 @@ METHODS = [
     "distance_threshold_graph",
     "state_only_dynamics_model",
     "pairwise_contact_classifier",
+    "random_forest_topology_planner",
+    "hist_gradient_topology_planner",
     "ensemble_uncertainty_planner",
+    "conformal_graph_guard",
+    "risk_averse_graph_planner",
+    "robust_contact_mpc",
     "contact_implicit_mpc_baseline",
-    "topology_world_model",
+    "topology_world_model_v4",
+    "topology_world_model_v5",
+    "topology_no_memory_ablation",
     "oracle_topology_planner",
 ]
 
 ABLATION_METHODS = [
-    "topology_full",
-    "topology_no_birth_death",
-    "topology_no_component_head",
-    "topology_no_jam_slip",
-    "topology_no_topology_planner",
-    "topology_no_uncertainty_penalty",
+    "topology_full_v5",
+    "ablate_no_birth_death",
+    "ablate_no_component_head",
+    "ablate_no_jam_slip",
+    "ablate_no_topology_planner",
+    "ablate_no_uncertainty_penalty",
+    "ablate_no_graph_memory",
+    "ablate_no_transition_bonus",
+    "ablate_no_fixture_guard",
+    "ablate_no_tail_risk_objective",
+    "topology_world_model_v4",
+    "learned_only_topology_replacement",
 ]
 
 STRESS_METHODS = [
     "pairwise_contact_classifier",
+    "random_forest_topology_planner",
+    "hist_gradient_topology_planner",
     "ensemble_uncertainty_planner",
+    "conformal_graph_guard",
+    "risk_averse_graph_planner",
+    "robust_contact_mpc",
     "contact_implicit_mpc_baseline",
-    "topology_world_model",
+    "topology_world_model_v4",
+    "topology_world_model_v5",
+    "topology_no_memory_ablation",
     "oracle_topology_planner",
 ]
 
@@ -169,7 +191,7 @@ class EpisodeConfig:
 @dataclass
 class BinaryPredictor:
     scaler: StandardScaler | None
-    model: LogisticRegression | None
+    model: object | None
     constant: float | None
 
 
@@ -182,7 +204,12 @@ class LearnedPack:
     pair_models: List[BinaryPredictor]
     topo_scaler: StandardScaler
     topo_models: List[BinaryPredictor]
+    rf_scaler: StandardScaler
+    rf_models: List[BinaryPredictor]
+    hgb_scaler: StandardScaler
+    hgb_models: List[BinaryPredictor]
     ensemble_models: List[List[BinaryPredictor]]
+    conformal_margin: np.ndarray
     training_rows: List[Dict[str, str]]
     state_mae: float
     edge_train_f1: float
@@ -193,8 +220,29 @@ SPLITS = [
     SplitSpec("contact_chain_transfer", 0.08, -0.02, -0.01, 0.13, 0.30, 0.62, 1.05, 0.006, 0.95, 0.1),
     SplitSpec("fixture_topology_shift", 0.06, -0.07, -0.07, 0.10, 0.10, 0.66, 1.10, 0.008, 0.90, 0.3),
     SplitSpec("friction_mass_shift", -0.04, 0.04, 0.03, 0.17, -0.24, 0.82, 1.45, 0.010, 0.84, 0.2),
+    SplitSpec("pocket_relocation", 0.00, 0.06, 0.16, 0.16, 0.22, 0.60, 1.05, 0.007, 0.94, 0.2),
+    SplitSpec("fixture_near_wall_jam", 0.09, -0.09, -0.12, 0.18, -0.34, 0.72, 1.22, 0.009, 0.88, 0.35),
+    SplitSpec("distractor_contact", -0.02, 0.08, 0.06, 0.09, 0.24, 0.68, 1.12, 0.012, 0.92, 0.70),
+    SplitSpec("contact_sensor_noise_burst", 0.04, -0.03, -0.04, 0.12, 0.18, 0.70, 1.18, 0.020, 0.90, 0.45),
+    SplitSpec("actuator_limit_chain", 0.06, -0.05, -0.03, 0.14, 0.14, 0.74, 1.28, 0.010, 0.68, 0.40),
+    SplitSpec("delayed_topology_transition", -0.08, 0.05, 0.04, 0.19, -0.08, 0.76, 1.25, 0.012, 0.82, 0.45),
     SplitSpec("combined_stress", 0.055, -0.045, -0.050, 0.12, 0.16, 0.80, 1.35, 0.014, 0.84, 0.45),
+    SplitSpec("combined_extreme_stress", 0.075, -0.070, -0.090, 0.08, 0.08, 0.95, 1.75, 0.022, 0.64, 0.85),
 ]
+
+DEFAULT_SPLIT_NAMES = [split.name for split in SPLITS]
+DEFAULT_ABLATION_SPLIT_NAMES = [
+    "combined_stress",
+    "combined_extreme_stress",
+    "fixture_near_wall_jam",
+    "actuator_limit_chain",
+]
+DEFAULT_STRESS_SPLIT_NAMES = [
+    "combined_stress",
+    "combined_extreme_stress",
+    "fixture_topology_shift",
+]
+DEFAULT_STRESS_LEVELS = [0.0, 0.25, 0.50, 0.75, 1.0]
 
 
 def ci95(values: Sequence[float]) -> float:
@@ -434,7 +482,7 @@ def topology_features(base: np.ndarray, current_edges: np.ndarray, action: np.nd
     return np.concatenate([base, desired_chain, current_edges * action[0] / 25.0, current_edges * action[1] / 25.0])
 
 
-def fit_binary_models(x: np.ndarray, y: np.ndarray) -> Tuple[StandardScaler, List[BinaryPredictor]]:
+def fit_binary_models(x: np.ndarray, y: np.ndarray, kind: str = "logistic") -> Tuple[StandardScaler, List[BinaryPredictor]]:
     scaler = StandardScaler().fit(x)
     xs = scaler.transform(x)
     models: List[BinaryPredictor] = []
@@ -443,7 +491,25 @@ def fit_binary_models(x: np.ndarray, y: np.ndarray) -> Tuple[StandardScaler, Lis
         if len(np.unique(yi)) < 2:
             models.append(BinaryPredictor(scaler=None, model=None, constant=float(np.mean(yi))))
             continue
-        model = LogisticRegression(max_iter=260, class_weight="balanced", solver="lbfgs")
+        if kind == "random_forest":
+            model = RandomForestClassifier(
+                n_estimators=28,
+                max_depth=8,
+                min_samples_leaf=5,
+                class_weight="balanced_subsample",
+                random_state=BASE_SEED + 101 * idx,
+                n_jobs=1,
+            )
+        elif kind == "hist_gradient":
+            model = HistGradientBoostingClassifier(
+                max_iter=45,
+                max_leaf_nodes=15,
+                learning_rate=0.07,
+                l2_regularization=0.02,
+                random_state=BASE_SEED + 211 * idx,
+            )
+        else:
+            model = LogisticRegression(max_iter=260, class_weight="balanced", solver="lbfgs")
         model.fit(xs, yi)
         models.append(BinaryPredictor(scaler=scaler, model=model, constant=None))
     return scaler, models
@@ -456,9 +522,17 @@ def predict_binary(models: List[BinaryPredictor], scaler: StandardScaler, x: np.
             probs.append(float(pred.constant or 0.0))
         else:
             active_scaler = pred.scaler or scaler
-            xs = (x - active_scaler.mean_) / np.where(active_scaler.scale_ == 0.0, 1.0, active_scaler.scale_)
-            z = float(xs @ pred.model.coef_[0] + pred.model.intercept_[0])
-            probs.append(float(1.0 / (1.0 + math.exp(-max(-50.0, min(50.0, z))))))
+            xs = ((x - active_scaler.mean_) / np.where(active_scaler.scale_ == 0.0, 1.0, active_scaler.scale_)).reshape(1, -1)
+            if hasattr(pred.model, "predict_proba"):
+                classes = list(getattr(pred.model, "classes_", [0, 1]))
+                model_probs = pred.model.predict_proba(xs)[0]
+                if 1 in classes:
+                    probs.append(float(model_probs[classes.index(1)]))
+                else:
+                    probs.append(float(model_probs[-1]))
+            else:
+                z = float(xs @ pred.model.coef_[0] + pred.model.intercept_[0])
+                probs.append(float(1.0 / (1.0 + math.exp(-max(-50.0, min(50.0, z))))))
     return np.array(probs, dtype=float)
 
 
@@ -514,19 +588,18 @@ def generate_training_pack() -> LearnedPack:
         x_pair.append(base)
         x_topo.append(topo)
         y_edges.append(next_edges)
-        if idx < 420:
-            rows.append(
-                {
-                    "example": str(idx),
-                    "split": split.name,
-                    "action_x": f"{action[0]:.4f}",
-                    "action_y": f"{action[1]:.4f}",
-                    "edge_count_before": f"{float(np.sum(current_edges)):.1f}",
-                    "edge_count_after": f"{float(np.sum(next_edges)):.1f}",
-                    "births": f"{float(np.sum((next_edges > 0.5) & (current_edges < 0.5))):.1f}",
-                    "deaths": f"{float(np.sum((next_edges < 0.5) & (current_edges > 0.5))):.1f}",
-                }
-            )
+        rows.append(
+            {
+                "example": str(idx),
+                "split": split.name,
+                "action_x": f"{action[0]:.4f}",
+                "action_y": f"{action[1]:.4f}",
+                "edge_count_before": f"{float(np.sum(current_edges)):.1f}",
+                "edge_count_after": f"{float(np.sum(next_edges)):.1f}",
+                "births": f"{float(np.sum((next_edges > 0.5) & (current_edges < 0.5))):.1f}",
+                "deaths": f"{float(np.sum((next_edges < 0.5) & (current_edges > 0.5))):.1f}",
+            }
+        )
     xs = np.vstack(x_state)
     ys = np.vstack(y_state)
     y_edge_arr = np.vstack(y_edges).astype(int)
@@ -538,8 +611,12 @@ def generate_training_pack() -> LearnedPack:
     state_mae = float(np.mean(np.abs(state_pred - ys)))
     pair_scaler, pair_models = fit_binary_models(np.vstack(x_pair), y_edge_arr)
     topo_scaler, topo_models = fit_binary_models(np.vstack(x_topo), y_edge_arr)
+    rf_scaler, rf_models = fit_binary_models(np.vstack(x_topo), y_edge_arr, kind="random_forest")
+    hgb_scaler, hgb_models = fit_binary_models(np.vstack(x_topo), y_edge_arr, kind="hist_gradient")
     pair_pred = np.array([predict_binary(pair_models, pair_scaler, x) for x in np.vstack(x_pair)])
     edge_train_f1 = float(np.mean([edge_f1(pair_pred[i], y_edge_arr[i]) for i in range(len(y_edge_arr))]))
+    topo_pred = np.array([predict_binary(topo_models, topo_scaler, x) for x in np.vstack(x_topo)])
+    conformal_margin = np.quantile(np.abs(topo_pred - y_edge_arr), 0.90, axis=0)
 
     ensemble_models: List[List[BinaryPredictor]] = []
     topo_x = np.vstack(x_topo)
@@ -556,7 +633,12 @@ def generate_training_pack() -> LearnedPack:
         pair_models=pair_models,
         topo_scaler=topo_scaler,
         topo_models=topo_models,
+        rf_scaler=rf_scaler,
+        rf_models=rf_models,
+        hgb_scaler=hgb_scaler,
+        hgb_models=hgb_models,
         ensemble_models=ensemble_models,
+        conformal_margin=conformal_margin,
         training_rows=rows,
         state_mae=state_mae,
         edge_train_f1=edge_train_f1,
@@ -576,22 +658,28 @@ def predict_for_action(method: str, pack: LearnedPack, qpos: np.ndarray, qvel: n
     topo = topology_features(base, current_edges, action)
     if method == "last_contact_persistence":
         probs = current_edges.copy()
-    elif method == "distance_threshold_graph" or method == "contact_implicit_mpc_baseline":
+    elif method in {"distance_threshold_graph", "contact_implicit_mpc_baseline", "robust_contact_mpc"}:
         predicted_qpos = qpos.copy()
         predicted_qpos[0:2] += 0.012 * action / max(1.0, np.linalg.norm(action))
-        probs = distance_edges_from_qpos(predicted_qpos, cfg, margin=0.025)
+        probs = distance_edges_from_qpos(predicted_qpos, cfg, margin=0.032 if method == "robust_contact_mpc" else 0.025)
     elif method == "state_only_dynamics_model":
         probs = predict_state_edges(pack, base, qpos, cfg)
     elif method == "pairwise_contact_classifier":
         probs = predict_binary(pack.pair_models, pack.pair_scaler, base)
+    elif method == "random_forest_topology_planner":
+        probs = predict_binary(pack.rf_models, pack.rf_scaler, topo)
+    elif method == "hist_gradient_topology_planner":
+        probs = predict_binary(pack.hgb_models, pack.hgb_scaler, topo)
     elif method == "ensemble_uncertainty_planner":
         preds = np.vstack([predict_binary(member, pack.topo_scaler, topo) for member in pack.ensemble_models])
         probs = np.mean(preds, axis=0) - 0.35 * np.std(preds, axis=0)
-    elif method in {"topology_world_model", "topology_full", "topology_no_component_head", "topology_no_jam_slip", "topology_no_uncertainty_penalty"}:
+    elif method == "conformal_graph_guard":
+        probs = np.clip(predict_binary(pack.topo_models, pack.topo_scaler, topo) - 0.35 * pack.conformal_margin, 0.0, 1.0)
+    elif method in {"risk_averse_graph_planner", "topology_world_model", "topology_world_model_v4", "topology_world_model_v5", "topology_full_v5", "ablate_no_component_head", "ablate_no_jam_slip", "ablate_no_uncertainty_penalty", "ablate_no_graph_memory", "ablate_no_transition_bonus", "ablate_no_fixture_guard", "ablate_no_tail_risk_objective"}:
         probs = predict_binary(pack.topo_models, pack.topo_scaler, topo)
-    elif method == "topology_no_birth_death":
+    elif method in {"topology_no_memory_ablation", "ablate_no_birth_death", "learned_only_topology_replacement"}:
         probs = predict_binary(pack.pair_models, pack.pair_scaler, base)
-    elif method == "topology_no_topology_planner":
+    elif method == "ablate_no_topology_planner":
         probs = predict_binary(pack.topo_models, pack.topo_scaler, topo)
     else:
         probs = current_edges.copy()
@@ -630,22 +718,45 @@ def topology_score(method: str, probs: np.ndarray, qpos: np.ndarray, action: np.
     jam_penalty = 0.0
     if probs[EDGE_INDEX["block_a_block_b"]] > 0.5 and (probs[EDGE_INDEX["block_b_fixture"]] > 0.35 or probs[EDGE_INDEX["block_b_wall"]] > 0.35):
         jam_penalty = 0.75
-    if method == "topology_no_component_head":
+    if method == "ablate_no_component_head":
         component_reward = 0.0
-    if method == "topology_no_jam_slip":
+    if method == "ablate_no_jam_slip":
         jam_penalty = 0.0
-    if method == "topology_no_topology_planner":
+    if method == "ablate_no_topology_planner":
         desired = 0.10 * desired
-    if method in {"last_contact_persistence", "distance_threshold_graph", "state_only_dynamics_model", "pairwise_contact_classifier"}:
+    if method in {"last_contact_persistence", "distance_threshold_graph", "state_only_dynamics_model", "pairwise_contact_classifier", "topology_no_memory_ablation", "learned_only_topology_replacement"}:
         desired *= 0.55
         component_reward *= 0.25
+    if method in {"random_forest_topology_planner", "hist_gradient_topology_planner"}:
+        desired *= 0.70
+        component_reward *= 0.50
     if method == "ensemble_uncertainty_planner":
         desired *= 0.80
         jam_penalty += 0.20 * (probs[EDGE_INDEX["block_b_fixture"]] + probs[EDGE_INDEX["block_b_wall"]])
-    if method == "contact_implicit_mpc_baseline":
+    if method == "conformal_graph_guard":
+        desired *= 0.82
+        jam_penalty += 0.38 * (probs[EDGE_INDEX["block_a_fixture"]] + probs[EDGE_INDEX["block_b_fixture"]] + probs[EDGE_INDEX["block_b_wall"]])
+    if method == "risk_averse_graph_planner":
+        progress_push *= 0.65
+        desired *= 0.70
+        jam_penalty += 0.85 * (probs[EDGE_INDEX["block_a_fixture"]] + probs[EDGE_INDEX["block_b_fixture"]] + probs[EDGE_INDEX["block_a_wall"]] + probs[EDGE_INDEX["block_b_wall"]])
+    if method == "topology_world_model_v4":
+        desired *= 0.82
+    if method in {"topology_world_model_v5", "topology_full_v5"}:
+        desired *= 1.05
+        component_reward *= 1.15
+        jam_penalty += 0.15 * (probs[EDGE_INDEX["block_a_wall"]] + probs[EDGE_INDEX["block_b_wall"]])
+    if method == "ablate_no_transition_bonus":
+        desired -= 0.40 * probs[EDGE_INDEX["block_a_block_b"]] + 0.35 * probs[EDGE_INDEX["block_b_pocket"]]
+    if method == "ablate_no_fixture_guard":
+        jam_penalty = max(0.0, jam_penalty - 0.65 * (probs[EDGE_INDEX["block_a_fixture"]] + probs[EDGE_INDEX["block_b_fixture"]]))
+    if method == "ablate_no_tail_risk_objective":
+        jam_penalty *= 0.55
+    if method in {"contact_implicit_mpc_baseline", "robust_contact_mpc"}:
         desired = -0.75 * p_to_a - 0.65 * a_to_b - 0.40 * y_error - 0.45 * abs(pts["B"][1] - pts["F"][1]) * cfg.distractor
         component_reward = 0.0
-        jam_penalty = 0.50 * (probs[EDGE_INDEX["block_b_fixture"]] + probs[EDGE_INDEX["block_b_wall"]])
+        jam_scale = 0.85 if method == "robust_contact_mpc" else 0.50
+        jam_penalty = jam_scale * (probs[EDGE_INDEX["block_b_fixture"]] + probs[EDGE_INDEX["block_b_wall"]] + 0.6 * probs[EDGE_INDEX["block_a_fixture"]])
     return float(0.70 * progress_push + y_action_reward + 0.55 * (1.0 - max(0.0, b_to_goal)) + align + desired + component_reward - jam_penalty)
 
 
@@ -715,7 +826,7 @@ def simulate_episode(model: mujoco.MjModel, method: str, cfg: EpisodeConfig, pac
             for candidate in ACTIONS:
                 probs, _ = predict_for_action(method, pack, qpos, qvel, current_edges, candidate, cfg, step_frac)
                 score = topology_score(method, probs, qpos, candidate, cfg, step_frac)
-                if method == "topology_no_uncertainty_penalty":
+                if method == "ablate_no_uncertainty_penalty":
                     score += 0.25 * (probs[EDGE_INDEX["block_a_fixture"]] + probs[EDGE_INDEX["block_b_fixture"]])
                 if score > best_score:
                     best_score = score
@@ -868,7 +979,7 @@ def build_summary(seed_rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return out
 
 
-def build_pairwise(seed_rows: List[Dict[str, str]], reference: str = "topology_world_model") -> List[Dict[str, str]]:
+def build_pairwise(seed_rows: List[Dict[str, str]], reference: str = "topology_world_model_v5") -> List[Dict[str, str]]:
     by_key = {(row["method"], row["split"], row["seed"]): row for row in seed_rows}
     rows: List[Dict[str, str]] = []
     methods = sorted({row["method"] for row in seed_rows if row["method"] != reference})
@@ -905,6 +1016,149 @@ def build_pairwise(seed_rows: List[Dict[str, str]], reference: str = "topology_w
     return rows
 
 
+def build_aggregate_metrics(seed_rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    hard_splits = {
+        "contact_chain_transfer",
+        "fixture_topology_shift",
+        "friction_mass_shift",
+        "pocket_relocation",
+        "fixture_near_wall_jam",
+        "distractor_contact",
+        "contact_sensor_noise_burst",
+        "actuator_limit_chain",
+        "delayed_topology_transition",
+        "combined_stress",
+        "combined_extreme_stress",
+    }
+    combined_splits = {"combined_stress", "combined_extreme_stress"}
+    groups = {
+        "all_splits": {row["split"] for row in seed_rows},
+        "hard_splits": hard_splits,
+        "combined_and_extreme": combined_splits,
+    }
+    metrics = [
+        "success_rate",
+        "mean_edge_f1",
+        "mean_birth_f1",
+        "mean_death_f1",
+        "mean_graph_edit",
+        "mean_component_accuracy",
+        "mean_jam_f1",
+        "mean_safety_violation_rate",
+        "mean_fixture_contact_rate",
+        "mean_wall_contact_rate",
+        "mean_final_progress",
+        "mean_final_y_error",
+        "mean_energy",
+    ]
+    rows: List[Dict[str, str]] = []
+    for group_name, split_names in groups.items():
+        for method in sorted({row["method"] for row in seed_rows}):
+            selected = [row for row in seed_rows if row["method"] == method and row["split"] in split_names]
+            if not selected:
+                continue
+            item = {"group": group_name, "method": method, "seed_split_rows": str(len(selected))}
+            for metric in metrics:
+                vals = [float(row[metric]) for row in selected]
+                out_name = metric.replace("mean_", "")
+                item[out_name] = f"{float(np.mean(vals)):.5f}"
+                item[f"ci95_{out_name}"] = f"{ci95(vals):.5f}"
+            rows.append(item)
+    return rows
+
+
+def build_aggregate_pairwise(seed_rows: List[Dict[str, str]], reference: str = "topology_world_model_v5") -> List[Dict[str, str]]:
+    aggregate = build_aggregate_metrics(seed_rows)
+    groups = sorted({row["group"] for row in aggregate})
+    rows: List[Dict[str, str]] = []
+    for group in groups:
+        ref = [row for row in aggregate if row["group"] == group and row["method"] == reference]
+        if not ref:
+            continue
+        ref_row = ref[0]
+        for other in [row for row in aggregate if row["group"] == group and row["method"] not in {reference}]:
+            rows.append(
+                {
+                    "group": group,
+                    "reference": reference,
+                    "comparison": other["method"],
+                    "success_diff": f"{float(ref_row['success_rate']) - float(other['success_rate']):.5f}",
+                    "edge_f1_diff": f"{float(ref_row['edge_f1']) - float(other['edge_f1']):.5f}",
+                    "graph_edit_reduction": f"{float(other['graph_edit']) - float(ref_row['graph_edit']):.5f}",
+                    "safety_reduction": f"{float(other['safety_violation_rate']) - float(ref_row['safety_violation_rate']):.5f}",
+                }
+            )
+    return rows
+
+
+def build_fixed_risk_metrics(raw_rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    hard_splits = {
+        "contact_chain_transfer",
+        "fixture_topology_shift",
+        "friction_mass_shift",
+        "pocket_relocation",
+        "fixture_near_wall_jam",
+        "distractor_contact",
+        "contact_sensor_noise_burst",
+        "actuator_limit_chain",
+        "delayed_topology_transition",
+        "combined_stress",
+        "combined_extreme_stress",
+    }
+    budgets = [0.05, 0.10, 0.20]
+    rows: List[Dict[str, str]] = []
+    for budget in budgets:
+        for method in sorted({row["method"] for row in raw_rows}):
+            selected = [row for row in raw_rows if row["method"] == method and row["split"] in hard_splits]
+            if not selected:
+                continue
+            safe_success = []
+            risks = []
+            for row in selected:
+                risk = max(
+                    float(row["safety_violation_rate"]),
+                    float(row["wall_contact_rate"]),
+                    max(0.0, float(row["fixture_contact_rate"]) - 0.25),
+                    max(0.0, 0.60 - float(row["jam_f1"])),
+                )
+                risks.append(risk)
+                safe_success.append(float(row["success"]) if risk <= budget else 0.0)
+            rows.append(
+                {
+                    "budget": f"{budget:.2f}",
+                    "method": method,
+                    "episodes": str(len(selected)),
+                    "success_at_budget": f"{float(np.mean(safe_success)):.5f}",
+                    "mean_diagnostic_risk": f"{float(np.mean(risks)):.5f}",
+                    "mean_safety_violation_rate": f"{mean_metric(selected, 'safety_violation_rate'):.5f}",
+                    "mean_fixture_contact_rate": f"{mean_metric(selected, 'fixture_contact_rate'):.5f}",
+                    "mean_wall_contact_rate": f"{mean_metric(selected, 'wall_contact_rate'):.5f}",
+                    "mean_jam_f1": f"{mean_metric(selected, 'jam_f1'):.5f}",
+                }
+            )
+    return rows
+
+
+def build_ablation_aggregate(ablation_summary: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    for method in sorted({row["method"] for row in ablation_summary}):
+        selected = [row for row in ablation_summary if row["method"] == method]
+        rows.append(
+            {
+                "method": method,
+                "split_rows": str(len(selected)),
+                "success": f"{float(np.mean([float(row['mean_success_rate']) for row in selected])):.5f}",
+                "edge_f1": f"{float(np.mean([float(row['mean_mean_edge_f1']) for row in selected])):.5f}",
+                "graph_edit": f"{float(np.mean([float(row['mean_mean_graph_edit']) for row in selected])):.5f}",
+                "safety_violation_rate": f"{float(np.mean([float(row['mean_mean_safety_violation_rate']) for row in selected])):.5f}",
+                "fixture_contact_rate": f"{float(np.mean([float(row['mean_mean_fixture_contact_rate']) for row in selected])):.5f}",
+                "wall_contact_rate": f"{float(np.mean([float(row['mean_mean_wall_contact_rate']) for row in selected])):.5f}",
+                "jam_f1": f"{float(np.mean([float(row['mean_mean_jam_f1']) for row in selected])):.5f}",
+            }
+        )
+    return rows
+
+
 def write_csv(path: Path, rows: List[Dict[str, str]]) -> None:
     if not rows:
         raise ValueError(f"no rows for {path}")
@@ -915,13 +1169,18 @@ def write_csv(path: Path, rows: List[Dict[str, str]]) -> None:
 
 
 def plot_metric(summary: List[Dict[str, str]], split_order: Sequence[str], methods: Sequence[str], metric: str, title: str, path: Path, ylim: Tuple[float, float] | None = None) -> None:
-    width = 0.10
+    width = min(0.08, 0.82 / max(1, len(methods)))
     x = np.arange(len(split_order))
-    plt.figure(figsize=(13, 5))
+    plt.figure(figsize=(16, 5.8))
     for idx, method in enumerate(methods):
         vals, errs = [], []
         for split in split_order:
-            row = [r for r in summary if r["method"] == method and r["split"] == split][0]
+            matches = [r for r in summary if r["method"] == method and r["split"] == split]
+            if not matches:
+                vals.append(0.0)
+                errs.append(0.0)
+                continue
+            row = matches[0]
             vals.append(float(row[f"mean_{metric}"]))
             errs.append(float(row[f"ci95_{metric}"]))
         plt.bar(x + (idx - len(methods) / 2) * width, vals, width, yerr=errs, label=method)
@@ -930,29 +1189,37 @@ def plot_metric(summary: List[Dict[str, str]], split_order: Sequence[str], metho
     plt.title(title)
     if ylim:
         plt.ylim(*ylim)
-    plt.legend(fontsize=7, ncol=2)
+    plt.legend(fontsize=6.5, ncol=3)
     plt.tight_layout()
     plt.savefig(path, dpi=180)
     plt.close()
 
 
 def plot_ablation(ablation_summary: List[Dict[str, str]], path: Path) -> None:
-    rows = [r for r in ablation_summary if r["split"] == "combined_stress"]
-    plt.figure(figsize=(10, 4.8))
-    plt.bar([r["method"] for r in rows], [float(r["mean_success_rate"]) for r in rows], yerr=[float(r["ci95_success_rate"]) for r in rows], color="#4b6f72")
+    rows = []
+    for method in sorted({row["method"] for row in ablation_summary}):
+        selected = [row for row in ablation_summary if row["method"] == method]
+        seed_vals = [float(row["mean_success_rate"]) for row in selected]
+        rows.append({"method": method, "success": float(np.mean(seed_vals)), "ci95": ci95(seed_vals)})
+    plt.figure(figsize=(12, 4.8))
+    plt.bar([r["method"] for r in rows], [float(r["success"]) for r in rows], yerr=[float(r["ci95"]) for r in rows], color="#4b6f72")
     plt.xticks(rotation=25, ha="right")
     plt.ylabel("success rate")
     plt.ylim(0, 1.0)
-    plt.title("Paper 73 topology world model ablations")
+    plt.title("Paper 73 topology world model ablations across frozen hard splits")
     plt.tight_layout()
     plt.savefig(path, dpi=180)
     plt.close()
 
 
 def plot_stress(stress_summary: List[Dict[str, str]], path: Path) -> None:
-    plt.figure(figsize=(9, 5))
+    preferred_split = "combined_extreme_stress" if any(row.get("split") == "combined_extreme_stress" for row in stress_summary) else None
+    plot_rows = [row for row in stress_summary if preferred_split is None or row.get("split") == preferred_split]
+    plt.figure(figsize=(10.5, 5.4))
     for method in sorted({row["method"] for row in stress_summary}):
-        rows = sorted([row for row in stress_summary if row["method"] == method], key=lambda r: float(r["stress_level"]))
+        rows = sorted([row for row in plot_rows if row["method"] == method], key=lambda r: float(r["stress_level"]))
+        if not rows:
+            continue
         x = [float(row["stress_level"]) for row in rows]
         y = [float(row["mean_success_rate"]) for row in rows]
         e = [float(row["ci95_success_rate"]) for row in rows]
@@ -960,44 +1227,128 @@ def plot_stress(stress_summary: List[Dict[str, str]], path: Path) -> None:
     plt.xlabel("stress level")
     plt.ylabel("success rate")
     plt.ylim(0, 1.0)
-    plt.title("Paper 73 contact-topology stress sweep")
-    plt.legend(fontsize=8)
+    title_suffix = preferred_split or "all stress splits"
+    plt.title(f"Paper 73 contact-topology stress sweep ({title_suffix})")
+    plt.legend(fontsize=7, ncol=2)
     plt.tight_layout()
     plt.savefig(path, dpi=180)
     plt.close()
 
 
-def decide(summary: List[Dict[str, str]], pairwise: List[Dict[str, str]]) -> Tuple[str, str]:
-    combined = [row for row in summary if row["split"] == "combined_stress"]
-    proposed = [row for row in combined if row["method"] == "topology_world_model"][0]
-    non_oracle = [row for row in combined if row["method"] not in {"topology_world_model", "oracle_topology_planner"}]
-    best = max(non_oracle, key=lambda row: float(row["mean_success_rate"]))
-    pair = [row for row in pairwise if row["split"] == "combined_stress" and row["comparison"] == best["method"]][0]
-    prop_success = float(proposed["mean_success_rate"])
-    best_success = float(best["mean_success_rate"])
-    paired = float(pair["paired_success_diff"])
-    paired_ci = float(pair["ci95_success_diff"])
-    prop_f1 = float(proposed["mean_mean_edge_f1"])
-    best_f1 = float(best["mean_mean_edge_f1"])
-    prop_safety = float(proposed["mean_mean_safety_violation_rate"])
-    best_safety = float(best["mean_mean_safety_violation_rate"])
-    if prop_success - best_success >= 0.045 and paired - paired_ci > 0.0 and prop_f1 >= best_f1 + 0.015 and prop_safety <= best_safety + 0.03:
-        return (
-            "STRONG_REVISE",
-            f"topology_world_model clears strongest non-oracle baseline {best['method']} on combined_stress by "
-            f"{prop_success - best_success:.3f} success with paired diff {paired:.3f}+/-{paired_ci:.3f}, "
-            "but lacks real robot/public benchmark validation.",
+def decide(
+    aggregate: List[Dict[str, str]],
+    pairwise: List[Dict[str, str]],
+    fixed_risk: List[Dict[str, str]],
+    ablation_aggregate: List[Dict[str, str]],
+    stress_summary: List[Dict[str, str]],
+) -> Tuple[str, str]:
+    reference = "topology_world_model_v5"
+    non_oracle_exclude = {reference, "oracle_topology_planner"}
+    reasons: List[str] = []
+
+    hard_v5 = [row for row in aggregate if row["group"] == "hard_splits" and row["method"] == reference][0]
+    hard_best = max(
+        [row for row in aggregate if row["group"] == "hard_splits" and row["method"] not in non_oracle_exclude],
+        key=lambda row: float(row["success_rate"]),
+    )
+    hard_margin = float(hard_v5["success_rate"]) - float(hard_best["success_rate"])
+    if hard_margin < 0.030:
+        reasons.append(
+            f"v5 does not beat strongest hard-regime baseline {hard_best['method']} by 0.030 "
+            f"(v5={float(hard_v5['success_rate']):.3f}, best={float(hard_best['success_rate']):.3f})"
         )
+
+    combined_v5 = [row for row in aggregate if row["group"] == "combined_and_extreme" and row["method"] == reference][0]
+    combined_best = max(
+        [row for row in aggregate if row["group"] == "combined_and_extreme" and row["method"] not in non_oracle_exclude],
+        key=lambda row: float(row["success_rate"]),
+    )
+    pair_rows = [row for row in pairwise if row["split"] == "combined_extreme_stress" and row["comparison"] == combined_best["method"]]
+    if not pair_rows:
+        pair_rows = [row for row in pairwise if row["split"] == "combined_stress" and row["comparison"] == combined_best["method"]]
+    if pair_rows:
+        paired = float(pair_rows[0]["paired_success_diff"])
+        paired_ci = float(pair_rows[0]["ci95_success_diff"])
+        if paired - paired_ci <= 0.0:
+            reasons.append(
+                f"paired lower bound against {combined_best['method']} is not positive ({paired:.3f}+/-{paired_ci:.3f})"
+            )
+    combined_margin = float(combined_v5["success_rate"]) - float(combined_best["success_rate"])
+    if combined_margin < 0.030:
+        reasons.append(
+            f"v5 does not beat strongest combined/extreme baseline {combined_best['method']} by 0.030 "
+            f"(v5={float(combined_v5['success_rate']):.3f}, best={float(combined_best['success_rate']):.3f})"
+        )
+    diagnostic_failures = []
+    for metric in ["graph_edit", "safety_violation_rate", "fixture_contact_rate", "wall_contact_rate"]:
+        if float(combined_v5[metric]) > float(combined_best[metric]) + 0.020:
+            diagnostic_failures.append(metric)
+    if diagnostic_failures:
+        reasons.append("diagnostic gate fails on " + ", ".join(diagnostic_failures))
+
+    fixed_v5 = [row for row in fixed_risk if row["budget"] == "0.10" and row["method"] == reference][0]
+    fixed_best = max(
+        [row for row in fixed_risk if row["budget"] == "0.10" and row["method"] not in {"oracle_topology_planner", reference}],
+        key=lambda row: float(row["success_at_budget"]),
+    )
+    if float(fixed_v5["success_at_budget"]) < float(fixed_best["success_at_budget"]) - 1e-9:
+        reasons.append(
+            f"fixed-risk gate fails at budget 0.10 (v5={float(fixed_v5['success_at_budget']):.3f}, "
+            f"best={fixed_best['method']} {float(fixed_best['success_at_budget']):.3f})"
+        )
+
+    max_rows = [row for row in stress_summary if row["stress_level"] == "1.00"]
+    stress_by_method = {
+        method: float(np.mean([float(row["mean_success_rate"]) for row in max_rows if row["method"] == method]))
+        for method in sorted({row["method"] for row in max_rows})
+    }
+    stress_v5 = stress_by_method[reference]
+    stress_best_method, stress_best_score = max(
+        [(method, score) for method, score in stress_by_method.items() if method not in {"oracle_topology_planner", reference}],
+        key=lambda item: item[1],
+    )
+    if stress_v5 < stress_best_score - 0.030:
+        reasons.append(
+            f"maximum-stress gate fails (v5={stress_v5:.3f}, "
+            f"best={stress_best_method} {stress_best_score:.3f})"
+        )
+
+    full = [row for row in ablation_aggregate if row["method"] == "topology_full_v5"][0]
+    ablation_failures = [
+        row["method"]
+        for row in ablation_aggregate
+        if row["method"] != "topology_full_v5"
+        and float(row["success"]) >= float(full["success"]) - 0.020
+        and float(row["safety_violation_rate"]) <= float(full["safety_violation_rate"]) + 0.020
+    ]
+    if ablation_failures:
+        reasons.append("ablation gate fails because " + ", ".join(ablation_failures) + " matches or beats full v5")
+
+    oracle_hard = [row for row in aggregate if row["group"] == "hard_splits" and row["method"] == "oracle_topology_planner"][0]
+    if float(oracle_hard["success_rate"]) < 0.200:
+        reasons.append(f"oracle sanity gate is weak on hard regimes (oracle={float(oracle_hard['success_rate']):.3f})")
+
+    if reasons:
+        return "KILL_ARCHIVE", "; ".join(reasons)
     return (
-        "KILL_ARCHIVE",
-        f"topology_world_model does not clear strongest non-oracle baseline {best['method']} decisively on combined_stress "
-        f"(topology={prop_success:.3f}, best_baseline={best_success:.3f}, paired diff={paired:.3f}+/-{paired_ci:.3f}, "
-        f"edge_f1={prop_f1:.3f} vs {best_f1:.3f}).",
+        "STRONG_REVISE",
+        "v5 clears frozen success, paired, diagnostic, fixed-risk, maximum-stress, and ablation gates, but still lacks real robot/public benchmark validation.",
     )
 
 
 def negative_cases(raw_rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    candidates = [r for r in raw_rows if r["method"] == "topology_world_model" and r["split"] in {"combined_stress", "fixture_topology_shift", "contact_chain_transfer"}]
+    hard_splits = {
+        "combined_stress",
+        "combined_extreme_stress",
+        "fixture_topology_shift",
+        "contact_chain_transfer",
+        "fixture_near_wall_jam",
+        "actuator_limit_chain",
+        "delayed_topology_transition",
+    }
+    candidates = [r for r in raw_rows if r["method"] == "topology_world_model_v5" and r["split"] in hard_splits]
+    if not candidates:
+        candidates = [r for r in raw_rows if r["method"] == "topology_world_model_v5"]
     worst = sorted(candidates, key=lambda r: (int(r["success"]), -float(r["fixture_contact_rate"]), -float(r["wall_contact_rate"]), float(r["final_progress"])))[:12]
     rows: List[Dict[str, str]] = []
     for idx, row in enumerate(worst):
@@ -1024,10 +1375,115 @@ def negative_cases(raw_rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return rows
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Paper 73 expanded contact-topology evidence protocol.")
+    parser.add_argument("--seeds", type=int, default=SEED_COUNT)
+    parser.add_argument("--episodes", type=int, default=EVAL_EPISODES)
+    parser.add_argument("--ablation-episodes", type=int, default=ABLATION_EPISODES)
+    parser.add_argument("--stress-episodes", type=int, default=STRESS_EPISODES)
+    parser.add_argument("--train-scenes", type=int, default=TRAINING_EXAMPLES)
+    parser.add_argument("--splits", nargs="+", default=(["combined_stress"] if QUICK_MODE else DEFAULT_SPLIT_NAMES))
+    parser.add_argument("--ablation-splits", nargs="+", default=(["combined_stress"] if QUICK_MODE else DEFAULT_ABLATION_SPLIT_NAMES))
+    parser.add_argument("--stress-splits", nargs="+", default=(["combined_stress"] if QUICK_MODE else DEFAULT_STRESS_SPLIT_NAMES))
+    parser.add_argument("--stress-levels", nargs="+", type=float, default=([0.0, 1.0] if QUICK_MODE else DEFAULT_STRESS_LEVELS))
+    parser.add_argument("--results-dir", default="results")
+    parser.add_argument("--figures-dir", default="figures")
+    parser.add_argument("--workers", type=int, default=1, help="Accepted for protocol logging; execution stays single-process for RAM discipline.")
+    return parser.parse_args()
+
+
+def resolve_output_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else ROOT / path
+
+
+def select_splits(names: Sequence[str]) -> List[SplitSpec]:
+    by_name = {split.name: split for split in SPLITS}
+    unknown = [name for name in names if name not in by_name]
+    if unknown:
+        raise ValueError(f"unknown split name(s): {', '.join(unknown)}")
+    return [by_name[name] for name in names]
+
+
+def build_stress_summary(stress_raw: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    metrics = [
+        "success",
+        "edge_f1",
+        "graph_edit",
+        "safety_violation_rate",
+        "fixture_contact_rate",
+        "wall_contact_rate",
+        "jam_f1",
+        "final_progress",
+    ]
+    rows: List[Dict[str, str]] = []
+    for (method, split, stress_level), group in sorted(group_rows(stress_raw, ["method", "split", "stress_level"]).items()):
+        metric_seed_vals: Dict[str, List[float]] = {metric: [] for metric in metrics}
+        for seed in [str(s) for s in SEEDS]:
+            seed_rows = [r for r in group if r["seed"] == seed]
+            if not seed_rows:
+                continue
+            for metric in metrics:
+                metric_seed_vals[metric].append(float(np.mean([float(r[metric]) for r in seed_rows])))
+        item = {
+            "method": method,
+            "split": split,
+            "stress_level": stress_level,
+            "seeds": str(len(metric_seed_vals["success"])),
+            "episodes_per_seed": str(len(group) // max(1, len(metric_seed_vals["success"]))),
+            "mean_success_rate": f"{float(np.mean(metric_seed_vals['success'])):.5f}",
+            "ci95_success_rate": f"{ci95(metric_seed_vals['success']):.5f}",
+        }
+        for metric in metrics:
+            if metric == "success":
+                continue
+            item[f"mean_{metric}"] = f"{float(np.mean(metric_seed_vals[metric])):.5f}"
+            item[f"ci95_{metric}"] = f"{ci95(metric_seed_vals[metric]):.5f}"
+        rows.append(item)
+    return rows
+
+
 def main() -> None:
+    global SEEDS, EVAL_EPISODES, ABLATION_EPISODES, STRESS_EPISODES, TRAINING_EXAMPLES, RESULTS, FIGURES
+
     start = time.time()
-    RESULTS.mkdir(exist_ok=True)
-    FIGURES.mkdir(exist_ok=True)
+    args = parse_args()
+    if args.seeds < 1 or args.episodes < 1 or args.ablation_episodes < 1 or args.stress_episodes < 1 or args.train_scenes < 1:
+        raise ValueError("seeds, episodes, ablation-episodes, stress-episodes, and train-scenes must all be positive")
+    SEEDS = list(range(args.seeds))
+    EVAL_EPISODES = args.episodes
+    ABLATION_EPISODES = args.ablation_episodes
+    STRESS_EPISODES = args.stress_episodes
+    TRAINING_EXAMPLES = args.train_scenes
+    RESULTS = resolve_output_path(args.results_dir)
+    FIGURES = resolve_output_path(args.figures_dir)
+
+    eval_splits = select_splits(args.splits)
+    ablation_splits = select_splits(args.ablation_splits)
+    stress_splits = select_splits(args.stress_splits)
+    stress_levels = [float(level) for level in args.stress_levels]
+
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    FIGURES.mkdir(parents=True, exist_ok=True)
+    write_csv(
+        RESULTS / "run_config.csv",
+        [
+            {
+                "seeds": " ".join(str(seed) for seed in SEEDS),
+                "episodes": str(EVAL_EPISODES),
+                "ablation_episodes": str(ABLATION_EPISODES),
+                "stress_episodes": str(STRESS_EPISODES),
+                "train_scenes": str(TRAINING_EXAMPLES),
+                "splits": " ".join(split.name for split in eval_splits),
+                "ablation_splits": " ".join(split.name for split in ablation_splits),
+                "stress_splits": " ".join(split.name for split in stress_splits),
+                "stress_levels": " ".join(f"{level:.2f}" for level in stress_levels),
+                "workers_argument": str(args.workers),
+                "execution_mode": "single_process_cpu_ram_light",
+            }
+        ],
+    )
+
     pack = generate_training_pack()
     write_csv(RESULTS / "training_topology_examples.csv", pack.training_rows)
     write_csv(
@@ -1044,7 +1500,6 @@ def main() -> None:
 
     model = make_model()
     raw_rows: List[Dict[str, str]] = []
-    eval_splits = [[s for s in SPLITS if s.name == "combined_stress"][0]] if QUICK_MODE else SPLITS
     for split in eval_splits:
         for seed in SEEDS:
             for episode in range(EVAL_EPISODES):
@@ -1056,66 +1511,47 @@ def main() -> None:
     seed_rows = build_seed_metrics(raw_rows)
     summary = build_summary(seed_rows)
     pairwise = build_pairwise(seed_rows)
+    aggregate = build_aggregate_metrics(seed_rows)
+    aggregate_pairwise = build_aggregate_pairwise(seed_rows)
+    fixed_risk = build_fixed_risk_metrics(raw_rows)
     write_csv(RESULTS / "raw_seed_metrics.csv", seed_rows)
     write_csv(RESULTS / "metrics.csv", summary)
     write_csv(RESULTS / "topology_metrics.csv", summary)
     write_csv(RESULTS / "pairwise_stats.csv", pairwise)
     write_csv(RESULTS / "topology_pairwise.csv", pairwise)
+    write_csv(RESULTS / "aggregate_metrics.csv", aggregate)
+    write_csv(RESULTS / "aggregate_pairwise_stats.csv", aggregate_pairwise)
+    write_csv(RESULTS / "fixed_risk_metrics.csv", fixed_risk)
 
-    combined = [s for s in SPLITS if s.name == "combined_stress"][0]
     ablation_raw: List[Dict[str, str]] = []
-    for seed in SEEDS:
-        for episode in range(ABLATION_EPISODES):
-            cfg = make_config(combined, seed, 1000 + episode)
-            for method in ABLATION_METHODS:
-                row = simulate_episode(model, method, cfg, pack)
-                row["method"] = method
-                ablation_raw.append(row)
+    for split in ablation_splits:
+        for seed in SEEDS:
+            for episode in range(ABLATION_EPISODES):
+                cfg = make_config(split, seed, 1000 + episode)
+                for method in ABLATION_METHODS:
+                    row = simulate_episode(model, method, cfg, pack)
+                    row["method"] = method
+                    ablation_raw.append(row)
     write_csv(RESULTS / "topology_ablation_raw.csv", ablation_raw)
     ablation_summary = build_summary(build_seed_metrics(ablation_raw))
+    ablation_aggregate = build_ablation_aggregate(ablation_summary)
     write_csv(RESULTS / "ablation_metrics.csv", ablation_summary)
     write_csv(RESULTS / "topology_ablation.csv", ablation_summary)
+    write_csv(RESULTS / "ablation_aggregate_metrics.csv", ablation_aggregate)
 
     stress_raw: List[Dict[str, str]] = []
-    stress_levels = [0.0, 1.0] if QUICK_MODE else list(np.linspace(0.0, 1.0, 6))
-    for stress_level in stress_levels:
-        for seed in SEEDS:
-            for episode in range(STRESS_EPISODES):
-                cfg = make_config(combined, seed, 2000 + episode, stress_level=float(stress_level))
-                for method in STRESS_METHODS:
-                    row = simulate_episode(model, method, cfg, pack)
-                    row["split"] = "stress_sweep"
-                    row["stress_level"] = f"{stress_level:.2f}"
-                    stress_raw.append(row)
+    for split in stress_splits:
+        for stress_level in stress_levels:
+            for seed in SEEDS:
+                for episode in range(STRESS_EPISODES):
+                    cfg = make_config(split, seed, 2000 + episode, stress_level=float(stress_level))
+                    for method in STRESS_METHODS:
+                        row = simulate_episode(model, method, cfg, pack)
+                        row["split"] = split.name
+                        row["stress_level"] = f"{stress_level:.2f}"
+                        stress_raw.append(row)
     write_csv(RESULTS / "stress_sweep_raw.csv", stress_raw)
-    stress_seed = build_seed_metrics(stress_raw)
-    stress_summary: List[Dict[str, str]] = []
-    for (method, stress_level), group in sorted(group_rows(stress_raw, ["method", "stress_level"]).items()):
-        metric_seed_vals: Dict[str, List[float]] = {
-            "success": [],
-            "edge_f1": [],
-            "graph_edit": [],
-            "safety_violation_rate": [],
-            "final_progress": [],
-        }
-        for seed in [str(s) for s in SEEDS]:
-            rows = [r for r in group if r["seed"] == seed]
-            if rows:
-                metric_seed_vals["success"].append(float(np.mean([float(r["success"]) for r in rows])))
-                for metric in ["edge_f1", "graph_edit", "safety_violation_rate", "final_progress"]:
-                    metric_seed_vals[metric].append(float(np.mean([float(r[metric]) for r in rows])))
-        item = {
-            "method": method,
-            "stress_level": stress_level,
-            "seeds": str(len(metric_seed_vals["success"])),
-            "episodes_per_seed": str(STRESS_EPISODES),
-            "mean_success_rate": f"{float(np.mean(metric_seed_vals['success'])):.5f}",
-            "ci95_success_rate": f"{ci95(metric_seed_vals['success']):.5f}",
-        }
-        for metric in ["edge_f1", "graph_edit", "safety_violation_rate", "final_progress"]:
-            item[f"mean_{metric}"] = f"{float(np.mean(metric_seed_vals[metric])):.5f}"
-            item[f"ci95_{metric}"] = f"{ci95(metric_seed_vals[metric]):.5f}"
-        stress_summary.append(item)
+    stress_summary = build_stress_summary(stress_raw)
     write_csv(RESULTS / "stress_sweep.csv", stress_summary)
     write_csv(FIGURES / "stress_curve_data.csv", stress_summary)
     write_csv(RESULTS / "negative_cases.csv", negative_cases(raw_rows))
@@ -1127,28 +1563,39 @@ def main() -> None:
     plot_ablation(ablation_summary, FIGURES / "topology_ablation_success.png")
     plot_stress(stress_summary, FIGURES / "topology_stress_sweep.png")
 
-    decision, reason = decide(summary, pairwise)
-    combined_rows = [r for r in summary if r["split"] == "combined_stress"]
+    decision, reason = decide(aggregate, pairwise, fixed_risk, ablation_aggregate, stress_summary)
+    combined_rows = [r for r in aggregate if r["group"] == "combined_and_extreme"]
+    hard_rows = [r for r in aggregate if r["group"] == "hard_splits"]
     elapsed = time.time() - start
     with (RESULTS / "summary.txt").open("w", encoding="utf-8") as f:
-        f.write("Paper 73 contact_topology_world_models real MuJoCo rebuild\n")
-        f.write(f"Terminal recommendation: {decision}\n")
-        f.write(f"Reason: {reason}\n")
+        f.write("Paper 73 contact_topology_world_models expanded MuJoCo rebuild\n")
+        f.write(f"Terminal decision: {decision}\n")
+        f.write(f"Terminal reason: {reason}\n")
         f.write(f"Main eval rows: {len(raw_rows)}\n")
         f.write(f"Ablation rows: {len(ablation_raw)}\n")
         f.write(f"Stress rows: {len(stress_raw)}\n")
         f.write(f"Seeds: {SEEDS}\n")
         f.write(f"Eval episodes per seed/split: {EVAL_EPISODES}\n")
+        f.write(f"Ablation splits: {' '.join(split.name for split in ablation_splits)}\n")
+        f.write(f"Stress splits: {' '.join(split.name for split in stress_splits)}\n")
+        f.write(f"Stress levels: {' '.join(f'{level:.2f}' for level in stress_levels)}\n")
         f.write(f"Runtime seconds: {elapsed:.2f}\n\n")
-        f.write("Combined-stress summary:\n")
-        for row in sorted(combined_rows, key=lambda r: -float(r["mean_success_rate"])):
+        f.write("Combined/extreme aggregate summary:\n")
+        for row in sorted(combined_rows, key=lambda r: -float(r["success_rate"])):
             f.write(
-                f"{row['method']} success={row['mean_success_rate']} ci95={row['ci95_success_rate']} "
-                f"edge_f1={row['mean_mean_edge_f1']} graph_edit={row['mean_mean_graph_edit']} "
-                f"safety={row['mean_mean_safety_violation_rate']} progress={row['mean_mean_final_progress']}\n"
+                f"{row['method']} success={row['success_rate']} ci95={row['ci95_success_rate']} "
+                f"edge_f1={row['edge_f1']} graph_edit={row['graph_edit']} "
+                f"safety={row['safety_violation_rate']} progress={row['final_progress']}\n"
+            )
+        f.write("\nHard-split aggregate summary:\n")
+        for row in sorted(hard_rows, key=lambda r: -float(r["success_rate"])):
+            f.write(
+                f"{row['method']} success={row['success_rate']} ci95={row['ci95_success_rate']} "
+                f"edge_f1={row['edge_f1']} graph_edit={row['graph_edit']} "
+                f"safety={row['safety_violation_rate']} progress={row['final_progress']}\n"
             )
     print(f"wrote Paper 73 MuJoCo contact-topology evidence to {RESULTS}")
-    print(f"terminal recommendation: {decision}")
+    print(f"terminal decision: {decision}")
     print(reason)
 
 
