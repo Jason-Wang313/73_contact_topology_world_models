@@ -1,19 +1,46 @@
-Paper 73 contact_topology_world_models real MuJoCo rebuild
-Terminal recommendation: KILL_ARCHIVE
-Reason: topology_world_model does not clear strongest non-oracle baseline ensemble_uncertainty_planner decisively on combined_stress (topology=0.107, best_baseline=0.125, paired diff=-0.018+/-0.035, edge_f1=0.610 vs 0.364).
-Main eval rows: 2240
-Ablation rows: 252
-Stress rows: 1050
-Seeds: [0, 1, 2, 3, 4, 5, 6]
-Eval episodes per seed/split: 8
-Runtime seconds: 3927.52
+Paper 73 contact_topology_world_models expanded MuJoCo rebuild
+Terminal decision: KILL_ARCHIVE
+Terminal reason: v5 does not beat strongest hard-regime baseline pairwise_contact_classifier by 0.030 (v5=0.059, best=0.095); paired lower bound against pairwise_contact_classifier is not positive (0.000+/-0.000); v5 does not beat strongest combined/extreme baseline pairwise_contact_classifier by 0.030 (v5=0.021, best=0.052); fixed-risk gate fails at budget 0.10 (v5=0.000, best=pairwise_contact_classifier 0.013); ablation gate fails because ablate_no_birth_death, ablate_no_component_head, ablate_no_fixture_guard, ablate_no_graph_memory, ablate_no_jam_slip, ablate_no_tail_risk_objective, ablate_no_topology_planner, ablate_no_transition_bonus, ablate_no_uncertainty_penalty matches or beats full v5; oracle sanity gate is weak on hard regimes (oracle=0.140)
+Main eval rows: 8640
+Ablation rows: 1536
+Stress rows: 4320
+Seeds: [0, 1, 2, 3, 4, 5, 6, 7]
+Eval episodes per seed/split: 6
+Ablation splits: combined_stress combined_extreme_stress fixture_near_wall_jam actuator_limit_chain
+Stress splits: combined_stress combined_extreme_stress fixture_topology_shift
+Stress levels: 0.00 0.25 0.50 0.75 1.00
+Runtime seconds: 15319.06
 
-Combined-stress summary:
-oracle_topology_planner success=0.25000 ci95=0.07561 edge_f1=1.00000 graph_edit=0.00000 safety=0.00000 progress=0.70683
-ensemble_uncertainty_planner success=0.12500 ci95=0.07561 edge_f1=0.36420 graph_edit=0.27588 safety=0.23661 progress=0.64873
-contact_implicit_mpc_baseline success=0.10714 ci95=0.08332 edge_f1=0.86104 graph_edit=0.05925 safety=0.28292 progress=0.58300
-distance_threshold_graph success=0.10714 ci95=0.08332 edge_f1=0.87142 graph_edit=0.05531 safety=0.28488 progress=0.58092
-last_contact_persistence success=0.10714 ci95=0.08332 edge_f1=0.85993 graph_edit=0.05271 safety=0.31138 progress=0.60887
-pairwise_contact_classifier success=0.10714 ci95=0.08332 edge_f1=0.54060 graph_edit=0.23486 safety=0.26953 progress=0.66473
-state_only_dynamics_model success=0.10714 ci95=0.08332 edge_f1=0.90423 graph_edit=0.04306 safety=0.29688 progress=0.59565
-topology_world_model success=0.10714 ci95=0.08332 edge_f1=0.61028 graph_edit=0.20885 safety=0.15848 progress=0.71615
+Combined/extreme aggregate summary:
+oracle_topology_planner success=0.14583 ci95=0.07819 edge_f1=1.00000 graph_edit=0.00000 safety=0.00000 progress=0.68922
+pairwise_contact_classifier success=0.05208 ci95=0.04917 edge_f1=0.74406 graph_edit=0.10522 safety=0.30642 progress=0.38753
+conformal_graph_guard success=0.04167 ci95=0.03652 edge_f1=0.62427 graph_edit=0.11354 safety=0.18424 progress=0.30663
+contact_implicit_mpc_baseline success=0.04167 ci95=0.04715 edge_f1=0.74614 graph_edit=0.11169 safety=0.27517 progress=0.32813
+distance_threshold_graph success=0.04167 ci95=0.04715 edge_f1=0.75219 graph_edit=0.10723 safety=0.27669 progress=0.33134
+hist_gradient_topology_planner success=0.04167 ci95=0.04715 edge_f1=0.86309 graph_edit=0.05691 safety=0.27062 progress=0.32810
+last_contact_persistence success=0.04167 ci95=0.04715 edge_f1=0.84337 graph_edit=0.05359 safety=0.27235 progress=0.34623
+random_forest_topology_planner success=0.04167 ci95=0.04715 edge_f1=0.48968 graph_edit=0.12687 safety=0.28472 progress=0.34497
+robust_contact_mpc success=0.04167 ci95=0.04715 edge_f1=0.71298 graph_edit=0.13175 safety=0.28819 progress=0.31750
+state_only_dynamics_model success=0.04167 ci95=0.04715 edge_f1=0.79854 graph_edit=0.09585 safety=0.28624 progress=0.34299
+topology_no_memory_ablation success=0.04167 ci95=0.04715 edge_f1=0.73853 graph_edit=0.09868 safety=0.28472 progress=0.39300
+ensemble_uncertainty_planner success=0.03125 ci95=0.04442 edge_f1=0.75904 graph_edit=0.08295 safety=0.27127 progress=0.37155
+risk_averse_graph_planner success=0.03125 ci95=0.03292 edge_f1=0.38686 graph_edit=0.14689 safety=0.08290 progress=0.47264
+topology_world_model_v4 success=0.03125 ci95=0.03292 edge_f1=0.63534 graph_edit=0.11656 safety=0.20226 progress=0.31831
+topology_world_model_v5 success=0.02083 ci95=0.02790 edge_f1=0.61682 graph_edit=0.11769 safety=0.19553 progress=0.32690
+
+Hard-split aggregate summary:
+oracle_topology_planner success=0.14015 ci95=0.02934 edge_f1=1.00000 graph_edit=0.00000 safety=0.00000 progress=0.63515
+pairwise_contact_classifier success=0.09470 ci95=0.03331 edge_f1=0.71223 graph_edit=0.12743 safety=0.22779 progress=0.38795
+topology_no_memory_ablation success=0.08902 ci95=0.02937 edge_f1=0.71105 graph_edit=0.12606 safety=0.22400 progress=0.38232
+ensemble_uncertainty_planner success=0.07955 ci95=0.02742 edge_f1=0.72546 graph_edit=0.10191 safety=0.22376 progress=0.35622
+topology_world_model_v4 success=0.07386 ci95=0.02524 edge_f1=0.61380 graph_edit=0.12197 safety=0.18052 progress=0.37790
+conformal_graph_guard success=0.07197 ci95=0.02521 edge_f1=0.61680 graph_edit=0.11980 safety=0.18209 progress=0.37550
+contact_implicit_mpc_baseline success=0.07197 ci95=0.02408 edge_f1=0.86867 graph_edit=0.05614 safety=0.22376 progress=0.37378
+last_contact_persistence success=0.07008 ci95=0.02345 edge_f1=0.90951 graph_edit=0.02903 safety=0.22210 progress=0.37457
+random_forest_topology_planner success=0.07008 ci95=0.02345 edge_f1=0.48394 graph_edit=0.14621 safety=0.22487 progress=0.37852
+robust_contact_mpc success=0.07008 ci95=0.02345 edge_f1=0.85250 graph_edit=0.06832 safety=0.22459 progress=0.37142
+state_only_dynamics_model success=0.07008 ci95=0.02284 edge_f1=0.90710 graph_edit=0.04455 safety=0.22502 progress=0.37622
+distance_threshold_graph success=0.06818 ci95=0.02279 edge_f1=0.87005 graph_edit=0.05508 safety=0.22151 progress=0.37190
+hist_gradient_topology_planner success=0.06818 ci95=0.02279 edge_f1=0.80406 graph_edit=0.08486 safety=0.22281 progress=0.37124
+risk_averse_graph_planner success=0.06629 ci95=0.02720 edge_f1=0.39003 graph_edit=0.15198 safety=0.07588 progress=0.46688
+topology_world_model_v5 success=0.05871 ci95=0.02304 edge_f1=0.59227 graph_edit=0.12352 safety=0.17255 progress=0.37120

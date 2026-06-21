@@ -4,26 +4,25 @@ Decision: KILL_ARCHIVE
 
 ICLR main-conference readiness: NO.
 
-Submission-hardening version: v4.
+Submission-hardening version: v5 expanded submission audit.
 
 ## Evidence Used
 
-The v4 rebuild replaces the synthetic scaffold with a MuJoCo contact-topology benchmark. It includes implemented baselines, a proposed topology world model, an oracle topology planner, seven seeds, eight evaluation episodes per seed/split, ablations, stress sweeps, uncertainty intervals, paired statistics, figures, raw rollouts, and negative cases.
+The v5 rebuild expands the prior local MuJoCo archive into a hostile-review protocol with 12 splits, 15 main methods, 12 ablations, 12 stress methods, 8 seeds, fixed-risk metrics, paired statistics, generated appendix tables, and a 36-page ICLR-style manuscript.
 
 ## Gate Result
 
-On `combined_stress`:
+The frozen gates fail:
 
-- `topology_world_model`: 0.107 +/- 0.083 success.
-- `ensemble_uncertainty_planner`: 0.125 +/- 0.076 success.
-- Paired topology-minus-ensemble success: -0.018 +/- 0.035.
-- `topology_world_model` edge F1: 0.610.
-- `ensemble_uncertainty_planner` edge F1: 0.364.
-
-The topology model improves graph prediction relative to the ensemble baseline but does not improve task success. Strong geometric/state baselines also match topology success while producing better edge F1 or graph edit distance.
+- Hard-regime margin: v5 success 0.05871 vs `pairwise_contact_classifier` 0.09470.
+- Combined/extreme margin: v5 success 0.02083 vs `pairwise_contact_classifier` 0.05208.
+- Paired lower bound: not positive against the strongest combined/extreme non-oracle baseline.
+- Fixed risk: v5 success at budget 0.10 is 0.000 vs best non-oracle 0.013.
+- Ablations: most removed-component variants match or beat full v5.
+- Oracle sanity: hard-regime oracle success is only 0.140.
 
 ## Terminal Action
 
 Archive/kill for ICLR main. Do not submit this paper as an ICLR main paper.
 
-Revival condition: show that contact-topology prediction changes decisions and improves success on real robot or public contact-rich benchmarks, not merely graph diagnostics.
+Revival condition: demonstrate that contact-topology prediction improves downstream success over strong non-oracle contact-rich control baselines on calibrated public or real-robot benchmarks, not merely graph diagnostics.

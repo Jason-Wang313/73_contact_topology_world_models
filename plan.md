@@ -18,3 +18,12 @@ Outcome: KILL_ARCHIVE. Contact topology prediction does not produce a decisive t
 3. Rebuild the PDF, repair recoverable LaTeX/BibTeX issues, and copy only `73.pdf` to Downloads.
 4. Preserve `KILL_ARCHIVE` unless topology prediction produces a decisive downstream task-success gain over the strongest non-oracle baseline.
 5. Update child docs, root reports, and GitHub state before moving to Paper 74.
+
+## 2026-06-21 Expanded-Standard v5 Plan
+
+1. Treat Paper 73 as a fresh ICLR-main hostile-review audit, not a polishing pass.
+2. Expand the benchmark to 12 splits, 15 main methods, 12 ablations, 12 stress methods, 8 seeds, fixed-risk analysis, max-stress gates, and generated appendix tables.
+3. Add stronger learned, ensemble, conformal, robust, risk-aware, and ablated topology baselines so graph F1 cannot substitute for downstream success.
+4. Freeze the exact command and gates before the full run.
+5. Require `topology_world_model_v5` to beat the best non-oracle controller by a downstream success margin, paired lower bound, fixed-risk gate, max-stress gate, and ablation-necessity gate.
+6. If any gate fails, write the 25+ page manuscript as an explicit KILL_ARCHIVE with real theory, real negative cases, bright boxed citations, and full generated evidence appendices.
